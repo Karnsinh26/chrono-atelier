@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    background-color: #0e0f12;
+    color: #f4f4f5;
+  }
+}
+
+/* Custom sleek dark scrollbar for the control panel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #15171c;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2c313d;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3e4556;
+}
+
+/* Custom range input styling */
+input[type='range'].atelier-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: #262a34;
+  height: 5px;
+  border-radius: 9999px;
+  outline: none;
+}
+
+input[type='range'].atelier-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #e6b45a;
+  cursor: pointer;
+  border: 2px solid #15171c;
+  box-shadow: 0 0 0 1px rgba(230, 180, 90, 0.4);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+input[type='range'].atelier-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+  background: #f0c370;
+}
