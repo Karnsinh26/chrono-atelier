@@ -245,79 +245,104 @@ function createTaperedHandShape(
   baseHalfWidth: number,
   tipHalfWidth: number
 ): THREE.Shape {
+  // Classic: slim tapered hand with a short counter-tail
   const s = new THREE.Shape();
-  const tailHalfWidth = baseHalfWidth * 0.72;
+  const tailHalfWidth = baseHalfWidth * 0.65;
   s.moveTo(-tailHalfWidth, -tailLength);
   s.lineTo(tailHalfWidth, -tailLength);
   s.lineTo(baseHalfWidth, 0);
-  s.lineTo(tipHalfWidth, tipLength - 0.05);
+  s.lineTo(tipHalfWidth, tipLength - 0.045);
   s.lineTo(0, tipLength);
-  s.lineTo(-tipHalfWidth, tipLength - 0.05);
+  s.lineTo(-tipHalfWidth, tipLength - 0.045);
   s.lineTo(-baseHalfWidth, 0);
   s.closePath();
   return s;
 }
 
 function createBoldHandShape(tailLength: number, tipLength: number, halfWidth: number): THREE.Shape {
+  // Bold: wide rounded-rectangle bar with semicircular caps (sampled without duplicate endpoints)
   const s = new THREE.Shape();
   const r = halfWidth;
-  s.moveTo(-r, -tailLength + r);
-  s.absarc(0, -tailLength + r, r, Math.PI, Math.PI * 2, false);
-  s.lineTo(r, tipLength - r);
-  s.absarc(0, tipLength - r, r, 0, Math.PI, false);
+  const bottomY = -tailLength + r;
+  const topY = tipLength - r;
+  const capSegs = 16;
+
+  // Bottom cap (PI -> 2*PI)
+  for (let i = 0; i <= capSegs; i++) {
+    const a = Math.PI + (i / capSegs) * Math.PI;
+    const x = Math.cos(a) * r;
+    const y = bottomY + Math.sin(a) * r;
+    if (i === 0) s.moveTo(x, y);
+    else s.lineTo(x, y);
+  }
+  // Top cap (0 -> PI)
+  for (let i = 0; i <= capSegs; i++) {
+    const a = (i / capSegs) * Math.PI;
+    const x = Math.cos(a) * r;
+    const y = topY + Math.sin(a) * r;
+    s.lineTo(x, y);
+  }
   s.closePath();
   return s;
 }
 
 function createSwordHandShape(tailLength: number, tipLength: number, maxHalfWidth: number): THREE.Shape {
+  // Sword: distinct leaf/gladius shape — narrow collar, widest in the middle, razor-pointed tip
   const s = new THREE.Shape();
-  const neck = maxHalfWidth * 0.42;
-  const swellY = tipLength * 0.56;
+  const collar = maxHalfWidth * 0.3;
+  const midY = tipLength * 0.52;
+  const tailWing = maxHalfWidth * 0.42;
+
   s.moveTo(0, -tailLength);
-  s.lineTo(neck * 0.9, -tailLength * 0.55);
-  s.lineTo(neck, 0);
-  s.quadraticCurveTo(maxHalfWidth * 1.12, swellY * 0.75, maxHalfWidth * 0.88, swellY);
-  s.quadraticCurveTo(maxHalfWidth * 0.48, tipLength * 0.84, 0, tipLength);
-  s.quadraticCurveTo(-maxHalfWidth * 0.48, tipLength * 0.84, -maxHalfWidth * 0.88, swellY);
-  s.quadraticCurveTo(-maxHalfWidth * 1.12, swellY * 0.75, -neck, 0);
-  s.lineTo(-neck * 0.9, -tailLength * 0.55);
+  s.lineTo(tailWing, -tailLength * 0.58);
+  s.lineTo(collar, 0);
+  s.quadraticCurveTo(maxHalfWidth * 1.18, midY * 0.72, maxHalfWidth * 0.95, midY);
+  s.quadraticCurveTo(maxHalfWidth * 0.52, tipLength * 0.82, 0, tipLength);
+  s.quadraticCurveTo(-maxHalfWidth * 0.52, tipLength * 0.82, -maxHalfWidth * 0.95, midY);
+  s.quadraticCurveTo(-maxHalfWidth * 1.18, midY * 0.72, -collar, 0);
+  s.lineTo(-tailWing, -tailLength * 0.58);
   s.closePath();
   return s;
 }
 
 function createSecondHandShape(): THREE.Shape {
   const s = new THREE.Shape();
-  s.moveTo(-0.026, -0.36);
-  s.lineTo(0.026, -0.36);
-  s.lineTo(0.036, -0.2);
-  s.lineTo(0.014, -0.13);
-  s.lineTo(0.013, 0);
-  s.lineTo(0.006, 1.32);
-  s.lineTo(-0.006, 1.32);
-  s.lineTo(-0.013, 0);
-  s.lineTo(-0.014, -0.13);
-  s.lineTo(-0.036, -0.2);
+  s.moveTo(-0.024, -0.38);
+  s.lineTo(0.024, -0.38);
+  s.lineTo(0.036, -0.21);
+  s.lineTo(0.013, -0.13);
+  s.lineTo(0.012, 0);
+  s.lineTo(0.0055, 1.42);
+  s.lineTo(-0.0055, 1.42);
+  s.lineTo(-0.012, 0);
+  s.lineTo(-0.013, -0.13);
+  s.lineTo(-0.036, -0.21);
   s.closePath();
   return s;
 }
 
 /**
- * Base hand geometries normalized for default innerApothem = 1.78 (bezel = 0.22).
+ * Base hand geometries normalized for reference innerApothem = 1.78 (bezel = 0.22):
+ * - Hour hand tip = 0.89 (~50% of inner dial radius)
+ * - Minute hand tip = 1.38 (~78% of inner dial radius)
  * Hands.tsx scales XY proportionally by (innerApothem / 1.78) so hands never cross the bezel.
  */
 export function buildHandGeometries(style: HandStyle): HandGeometryBundle {
+  const hourTip = 0.89; // 50.0% of 1.78
+  const minuteTip = 1.38; // 77.5% of 1.78
+
   let hourShape: THREE.Shape;
   let minuteShape: THREE.Shape;
 
   if (style === 'bold') {
-    hourShape = createBoldHandShape(0.2, 0.88, 0.052);
-    minuteShape = createBoldHandShape(0.24, 1.24, 0.04);
+    hourShape = createBoldHandShape(0.21, hourTip, 0.068);
+    minuteShape = createBoldHandShape(0.25, minuteTip, 0.052);
   } else if (style === 'sword') {
-    hourShape = createSwordHandShape(0.22, 0.9, 0.078);
-    minuteShape = createSwordHandShape(0.26, 1.26, 0.062);
+    hourShape = createSwordHandShape(0.22, hourTip, 0.094);
+    minuteShape = createSwordHandShape(0.27, minuteTip, 0.076);
   } else {
-    hourShape = createTaperedHandShape(0.2, 0.88, 0.055, 0.012);
-    minuteShape = createTaperedHandShape(0.25, 1.25, 0.044, 0.009);
+    hourShape = createTaperedHandShape(0.18, hourTip, 0.048, 0.009);
+    minuteShape = createTaperedHandShape(0.22, minuteTip, 0.038, 0.007);
   }
 
   const secondShape = createSecondHandShape();

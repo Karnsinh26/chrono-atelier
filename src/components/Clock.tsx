@@ -82,12 +82,12 @@ export const Clock: React.FC = () => {
   }, [geometries]);
 
   return (
-    <Stand>
-      <group ref={scaleGroupRef}>
+    <group ref={scaleGroupRef}>
+      <Stand>
         <Case geometries={geometries} />
         <Dial geometry={geometries.dialGeometry} />
         <Hands innerApothem={geometries.innerApothem} />
-      </group>
-    </Stand>
+      </Stand>
+    </group>
   );
 };

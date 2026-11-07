@@ -1,16 +1,20 @@
-import React, { Suspense, useEffect, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Canvas, useThree } from '@react-three/fiber';
 import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { Clock } from './components/Clock';
 import { Panel } from './components/Panel';
+import { DESK_FLOOR_Y } from './components/Stand';
 import {
   CaseMaterial,
   CaseShape,
   ClockConfig,
   DialFinish,
+  HandStyle,
   HourMarkerStyle,
+  MountType,
+  PresetName,
   useClockStore,
 } from './store/useClockStore';
 
@@ -23,22 +27,25 @@ function formatDigitalTime(date: Date): string {
   });
 }
 
+const VALID_PRESETS: PresetName[] = ['classic', 'minimal', 'luxury', 'workshop'];
 const VALID_SHAPES: CaseShape[] = ['round', 'square', 'hexagon'];
 const VALID_MATS: CaseMaterial[] = ['gold', 'roseGold', 'steel', 'black', 'walnut', 'ceramic'];
 const VALID_FINISHES: DialFinish[] = ['plain', 'sunburst', 'guilloche'];
 const VALID_MARKERS: HourMarkerStyle[] = ['dots', 'sticks', 'arabic', 'roman'];
+const VALID_HANDS: HandStyle[] = ['classic', 'bold', 'sword'];
+const VALID_MOUNTS: MountType[] = ['wall', 'desk'];
 
 interface ResponsiveCameraRigProps {
   controlsRef: React.RefObject<OrbitControlsImpl | null>;
 }
 
 /**
- * Dynamically fits the camera distance & vertical target on mount and whenever
- * the canvas resizes (narrow windows, split view, mobile <820px) so the entire
- * clock (including flat-top hexagon width) maintains ~15%+ padding and never overlaps overlays.
+ * Dynamically fits the camera distance & vertical target on mount, viewport resize,
+ * and wall/desk mount change so both the clock and desk stand stay framed with ~15%+ padding.
  */
 const ResponsiveCameraRig: React.FC<ResponsiveCameraRigProps> = ({ controlsRef }) => {
   const { camera, size } = useThree();
+  const mount = useClockStore((s) => s.mount);
   const initializedRef = useRef(false);
 
   useEffect(() => {
@@ -53,16 +60,16 @@ const ResponsiveCameraRig: React.FC<ResponsiveCameraRigProps> = ({ controlsRef }
     const tanHalfFov = Math.tan(vFovRad / 2);
     const aspect = size.width / size.height;
 
-    const topReservedPx = size.width < 640 ? 72 : 88;
-    const bottomReservedPx = size.width < 640 ? 24 : 38;
+    const topReservedPx = size.width < 640 ? 68 : 88;
+    const bottomReservedPx = size.width < 640 ? 20 : 38;
     const safeHeightRatio = Math.max(
       0.5,
       (size.height - topReservedPx - bottomReservedPx) / size.height
     );
 
-    // Accommodates round, square, and hexagon (circumradius ~2.31) with ~15%+ padding on every side
+    // Desk mount is slightly taller overall (base block + upward clock offset)
     const paddedHalfWidth = 3.36;
-    const paddedHalfHeightInSafeZone = 2.9;
+    const paddedHalfHeightInSafeZone = mount === 'desk' ? 3.16 : 2.9;
     const requiredHalfHeight = paddedHalfHeightInSafeZone / safeHeightRatio;
 
     const distForHeight = requiredHalfHeight / tanHalfFov;
@@ -71,7 +78,9 @@ const ResponsiveCameraRig: React.FC<ResponsiveCameraRigProps> = ({ controlsRef }
 
     const visibleFullHeight = 2 * fitDistance * tanHalfFov;
     const pixelCenterOffset = (topReservedPx - bottomReservedPx) * 0.5;
-    const targetOffsetY = (pixelCenterOffset / size.height) * visibleFullHeight;
+    const sceneCenterY = mount === 'desk' ? 0.09 : 0;
+    const targetOffsetY =
+      sceneCenterY + (pixelCenterOffset / size.height) * visibleFullHeight;
 
     const target = new THREE.Vector3(0, targetOffsetY, 0);
     const controls = controlsRef.current;
@@ -84,7 +93,7 @@ const ResponsiveCameraRig: React.FC<ResponsiveCameraRigProps> = ({ controlsRef }
         const rad = THREE.MathUtils.degToRad(debugAngleDeg);
         camera.position.set(
           Math.sin(rad) * fitDistance,
-          targetOffsetY + 0.3,
+          targetOffsetY + 0.28,
           Math.cos(rad) * fitDistance
         );
       } else {
@@ -117,20 +126,67 @@ const ResponsiveCameraRig: React.FC<ResponsiveCameraRigProps> = ({ controlsRef }
       camera.lookAt(target);
       camera.updateProjectionMatrix();
     }
-  }, [camera, size.width, size.height, controlsRef]);
+  }, [camera, size.width, size.height, mount, controlsRef]);
 
   return null;
 };
 
 export const App: React.FC = () => {
   const autoRotate = useClockStore((s) => s.autoRotate);
+  const mount = useClockStore((s) => s.mount);
   const setConfig = useClockStore((s) => s.setConfig);
+  const applyPreset = useClockStore((s) => s.applyPreset);
+
   const [now, setNow] = useState(() => new Date());
+  const [dragPaused, setDragPaused] = useState(false);
+  const resumeTimerRef = useRef<number | null>(null);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
 
-  // Support optional URL params (?shape=hexagon&mat=walnut&bezel=0.45) for deep-linking & testing
+  // Pause turntable while dragging; resume 2s after user releases
+  const handleOrbitStart = useCallback(() => {
+    if (resumeTimerRef.current !== null) {
+      window.clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = null;
+    }
+    setDragPaused(true);
+  }, []);
+
+  const handleOrbitEnd = useCallback(() => {
+    if (resumeTimerRef.current !== null) {
+      window.clearTimeout(resumeTimerRef.current);
+    }
+    resumeTimerRef.current = window.setTimeout(() => {
+      setDragPaused(false);
+      resumeTimerRef.current = null;
+    }, 2000);
+  }, []);
+
+  useEffect(() => {
+    if (!autoRotate) {
+      if (resumeTimerRef.current !== null) {
+        window.clearTimeout(resumeTimerRef.current);
+        resumeTimerRef.current = null;
+      }
+      setDragPaused(false);
+    }
+  }, [autoRotate]);
+
+  useEffect(() => {
+    return () => {
+      if (resumeTimerRef.current !== null) {
+        window.clearTimeout(resumeTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Optional URL query params for presets / deep-linking / automated visual verification
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const qPreset = params.get('preset') as PresetName | null;
+    if (qPreset && VALID_PRESETS.includes(qPreset)) {
+      applyPreset(qPreset);
+    }
+
     const patch: Partial<ClockConfig> = {};
     const qShape = params.get('shape') as CaseShape | null;
     const qMat = params.get('mat') as CaseMaterial | null;
@@ -140,40 +196,28 @@ export const App: React.FC = () => {
     const qMarkers = params.get('markers') as HourMarkerStyle | null;
     const qTrack = params.get('track');
     const qEngraving = params.get('engraving');
+    const qHandStyle = params.get('hands') as HandStyle | null;
+    const qMount = params.get('mount') as MountType | null;
 
-    if (qShape && VALID_SHAPES.includes(qShape)) {
-      patch.shape = qShape;
-    }
-    if (qMat && VALID_MATS.includes(qMat)) {
-      patch.caseMat = qMat;
-    }
+    if (qShape && VALID_SHAPES.includes(qShape)) patch.shape = qShape;
+    if (qMat && VALID_MATS.includes(qMat)) patch.caseMat = qMat;
     if (qBezel !== null) {
       const parsed = parseFloat(qBezel);
-      if (!Number.isNaN(parsed)) {
-        patch.bezel = Math.min(0.45, Math.max(0.1, parsed));
-      }
+      if (!Number.isNaN(parsed)) patch.bezel = Math.min(0.45, Math.max(0.1, parsed));
     }
-    if (qDialColor && /^#[0-9a-fA-F]{6}$/.test(qDialColor)) {
-      patch.dialColor = qDialColor;
-    }
-    if (qFinish && VALID_FINISHES.includes(qFinish)) {
-      patch.dialFinish = qFinish;
-    }
-    if (qMarkers && VALID_MARKERS.includes(qMarkers)) {
-      patch.hourMarkers = qMarkers;
-    }
-    if (qTrack === '0' || qTrack === 'false') {
-      patch.showMinuteTrack = false;
-    } else if (qTrack === '1' || qTrack === 'true') {
-      patch.showMinuteTrack = true;
-    }
-    if (qEngraving !== null) {
-      patch.engraving = qEngraving.slice(0, 18);
-    }
+    if (qDialColor && /^#[0-9a-fA-F]{6}$/.test(qDialColor)) patch.dialColor = qDialColor;
+    if (qFinish && VALID_FINISHES.includes(qFinish)) patch.dialFinish = qFinish;
+    if (qMarkers && VALID_MARKERS.includes(qMarkers)) patch.hourMarkers = qMarkers;
+    if (qTrack === '0' || qTrack === 'false') patch.showMinuteTrack = false;
+    else if (qTrack === '1' || qTrack === 'true') patch.showMinuteTrack = true;
+    if (qEngraving !== null) patch.engraving = qEngraving.slice(0, 18);
+    if (qHandStyle && VALID_HANDS.includes(qHandStyle)) patch.handStyle = qHandStyle;
+    if (qMount && VALID_MOUNTS.includes(qMount)) patch.mount = qMount;
+
     if (Object.keys(patch).length > 0) {
       setConfig(patch);
     }
-  }, [setConfig]);
+  }, [applyPreset, setConfig]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -182,9 +226,11 @@ export const App: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
+  const shadowY = mount === 'desk' ? DESK_FLOOR_Y - 0.012 : -2.42;
+
   return (
-    <div className="min-h-screen desktop:h-screen w-full bg-atelier-bg text-zinc-100 flex flex-col desktop:flex-row overflow-x-hidden desktop:overflow-hidden">
-      {/* 3D Viewport Area */}
+    <div className="h-[100dvh] w-full bg-atelier-bg text-zinc-100 flex flex-col desktop:flex-row overflow-hidden">
+      {/* 3D Viewport Area (58vh on mobile <820px, fills left space on desktop) */}
       <main className="relative w-full h-[58vh] desktop:h-full desktop:flex-1 shrink-0 bg-atelier-bg">
         {/* Subtle radial studio backdrop glow */}
         <div
@@ -234,10 +280,10 @@ export const App: React.FC = () => {
             shadow-mapSize-height={2048}
             shadow-camera-near={1}
             shadow-camera-far={20}
-            shadow-camera-left={-3.5}
-            shadow-camera-right={3.5}
-            shadow-camera-top={3.5}
-            shadow-camera-bottom={-3.5}
+            shadow-camera-left={-4}
+            shadow-camera-right={4}
+            shadow-camera-top={4}
+            shadow-camera-bottom={-4}
             shadow-bias={-0.0003}
             shadow-normalBias={0.015}
           />
@@ -278,7 +324,6 @@ export const App: React.FC = () => {
                 scale={4.5}
                 color="#ffffff"
               />
-              {/* Rear studio softbox so back body & side walls gleam when rotated 180° */}
               <Lightformer
                 form="rect"
                 intensity={2.2}
@@ -300,10 +345,10 @@ export const App: React.FC = () => {
             <Clock />
 
             <ContactShadows
-              position={[0, -2.42, 0]}
-              opacity={0.58}
+              position={[0, shadowY, 0]}
+              opacity={mount === 'desk' ? 0.68 : 0.45}
               scale={9.5}
-              blur={2.4}
+              blur={mount === 'desk' ? 2.0 : 2.6}
               far={4.5}
               color="#000000"
             />
@@ -315,11 +360,13 @@ export const App: React.FC = () => {
             enableDamping
             dampingFactor={0.055}
             minDistance={5.5}
-            maxDistance={16.5}
+            maxDistance={17}
             minPolarAngle={Math.PI * 0.2}
             maxPolarAngle={Math.PI * 0.8}
-            autoRotate={autoRotate}
-            autoRotateSpeed={1.1}
+            autoRotate={autoRotate && !dragPaused}
+            autoRotateSpeed={1.0}
+            onStart={handleOrbitStart}
+            onEnd={handleOrbitEnd}
           />
           <ResponsiveCameraRig controlsRef={controlsRef} />
         </Canvas>

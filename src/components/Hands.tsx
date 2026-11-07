@@ -10,6 +10,21 @@ interface HandsProps {
 }
 
 const REFERENCE_INNER_APOTHEM = 1.78;
+const QUARTZ_TICK_DURATION_MS = 80;
+
+/**
+ * Computes realistic quartz tick progression within a 1000ms second:
+ * snaps over ~80ms with a subtle mechanical gear-lash overshoot bounce,
+ * then holds dead-still on the exact integer second with zero cumulative drift.
+ */
+function computeQuartzSeconds(rawSec: number, ms: number): number {
+  if (ms >= QUARTZ_TICK_DURATION_MS) {
+    return rawSec;
+  }
+  const u = ms / QUARTZ_TICK_DURATION_MS; // 0 .. 1 over 80ms
+  const stepProgress = 1 - Math.exp(-5.5 * u) * Math.cos(2.4 * Math.PI * u);
+  return rawSec - 1 + stepProgress;
+}
 
 /**
  * Hand & Pinion Z-stack (all cleanly separated between dial at +0.015 and glass at +0.205):
@@ -33,6 +48,7 @@ export const Hands: React.FC<HandsProps> = ({ innerApothem }) => {
   const minuteGroupRef = useRef<THREE.Group>(null);
   const secondGroupRef = useRef<THREE.Group>(null);
 
+  // Rebuilds only hand geometries when handStyle changes and disposes old ones
   const handGeometries = useMemo(() => buildHandGeometries(handStyle), [handStyle]);
 
   useEffect(() => {
@@ -43,13 +59,15 @@ export const Hands: React.FC<HandsProps> = ({ innerApothem }) => {
 
   const handScale = innerApothem / REFERENCE_INNER_APOTHEM;
   const pinionColor = CASE_MATERIAL_SPECS[caseMat].pinionColor;
+  const centerCapColor = showSeconds ? secondsColor : handColor;
 
   useFrame(() => {
     const now = new Date();
     const ms = now.getMilliseconds();
     const rawSec = now.getSeconds();
     const continuousSec = rawSec + ms / 1000;
-    const displaySec = secondsMode === 'sweep' ? continuousSec : rawSec;
+    const displaySec =
+      secondsMode === 'sweep' ? continuousSec : computeQuartzSeconds(rawSec, ms);
 
     const minutes = now.getMinutes() + continuousSec / 60;
     const hours = (now.getHours() % 12) + minutes / 60;
@@ -81,8 +99,8 @@ export const Hands: React.FC<HandsProps> = ({ innerApothem }) => {
           <meshPhysicalMaterial
             color={handColor}
             metalness={0.55}
-            roughness={0.28}
-            clearcoat={0.3}
+            roughness={0.26}
+            clearcoat={0.35}
           />
         </mesh>
       </group>
@@ -97,8 +115,8 @@ export const Hands: React.FC<HandsProps> = ({ innerApothem }) => {
           <meshPhysicalMaterial
             color={handColor}
             metalness={0.55}
-            roughness={0.28}
-            clearcoat={0.3}
+            roughness={0.26}
+            clearcoat={0.35}
           />
         </mesh>
       </group>
@@ -113,8 +131,8 @@ export const Hands: React.FC<HandsProps> = ({ innerApothem }) => {
           <mesh geometry={handGeometries.secondGeometry} renderOrder={4} castShadow>
             <meshPhysicalMaterial
               color={secondsColor}
-              metalness={0.45}
-              roughness={0.25}
+              metalness={0.5}
+              roughness={0.24}
               clearcoat={0.4}
             />
           </mesh>
@@ -137,7 +155,7 @@ export const Hands: React.FC<HandsProps> = ({ innerApothem }) => {
         />
       </mesh>
 
-      {/* Top center cap: world Z [+0.155, +0.179] */}
+      {/* Top center cap: takes secondsColor when seconds shown, else handColor */}
       <mesh
         position={[0, 0, 0.167]}
         rotation={[Math.PI / 2, 0, 0]}
@@ -145,9 +163,9 @@ export const Hands: React.FC<HandsProps> = ({ innerApothem }) => {
       >
         <cylinderGeometry args={[0.054, 0.064, 0.024, 32]} />
         <meshPhysicalMaterial
-          color={showSeconds ? secondsColor : handColor}
-          metalness={0.7}
-          roughness={0.2}
+          color={centerCapColor}
+          metalness={0.62}
+          roughness={0.22}
           clearcoat={0.5}
         />
       </mesh>
