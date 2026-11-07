@@ -1,6 +1,6 @@
 import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { Clock } from './components/Clock';
@@ -35,18 +35,26 @@ const VALID_MARKERS: HourMarkerStyle[] = ['dots', 'sticks', 'arabic', 'roman'];
 const VALID_HANDS: HandStyle[] = ['classic', 'bold', 'sword'];
 const VALID_MOUNTS: MountType[] = ['wall', 'desk'];
 
+const WALL_SWING_AMPLITUDE = 0.72; // Within [-0.9, 0.9] rad
+const WALL_SWING_PERIOD_SEC = 8.0; // ~8s full left<->right sinusoidal period
+
 interface ResponsiveCameraRigProps {
   controlsRef: React.RefObject<OrbitControlsImpl | null>;
+  activeAutoRotate: boolean;
 }
 
 /**
- * Dynamically fits the camera distance & vertical target on mount, viewport resize,
- * and wall/desk mount change so both the clock and desk stand stay framed with ~15%+ padding.
+ * Dynamically fits camera distance & vertical target on mount, resize, and wall/desk toggle,
+ * and drives the gentle ~8s sinusoidal left<->right swing in wall auto-rotate mode.
  */
-const ResponsiveCameraRig: React.FC<ResponsiveCameraRigProps> = ({ controlsRef }) => {
+const ResponsiveCameraRig: React.FC<ResponsiveCameraRigProps> = ({
+  controlsRef,
+  activeAutoRotate,
+}) => {
   const { camera, size } = useThree();
   const mount = useClockStore((s) => s.mount);
   const initializedRef = useRef(false);
+  const swingPhaseRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!(camera instanceof THREE.PerspectiveCamera)) return;
@@ -67,7 +75,6 @@ const ResponsiveCameraRig: React.FC<ResponsiveCameraRigProps> = ({ controlsRef }
       (size.height - topReservedPx - bottomReservedPx) / size.height
     );
 
-    // Desk mount is slightly taller overall (base block + upward clock offset)
     const paddedHalfWidth = 3.36;
     const paddedHalfHeightInSafeZone = mount === 'desk' ? 3.16 : 2.9;
     const requiredHalfHeight = paddedHalfHeightInSafeZone / safeHeightRatio;
@@ -127,6 +134,39 @@ const ResponsiveCameraRig: React.FC<ResponsiveCameraRigProps> = ({ controlsRef }
       camera.updateProjectionMatrix();
     }
   }, [camera, size.width, size.height, mount, controlsRef]);
+
+  // Reset swing phase when auto-rotate or mount changes so resume is seamless without jump
+  useEffect(() => {
+    swingPhaseRef.current = null;
+  }, [activeAutoRotate, mount]);
+
+  useFrame((_, delta) => {
+    if (mount !== 'wall' || !activeAutoRotate) return;
+    const controls = controlsRef.current;
+    if (!controls) return;
+
+    const offset = camera.position.clone().sub(controls.target);
+    const spherical = new THREE.Spherical().setFromVector3(offset);
+
+    if (swingPhaseRef.current === null) {
+      const ratio = THREE.MathUtils.clamp(
+        spherical.theta / WALL_SWING_AMPLITUDE,
+        -1,
+        1
+      );
+      swingPhaseRef.current = Math.asin(ratio);
+    }
+
+    swingPhaseRef.current +=
+      ((Math.PI * 2) / WALL_SWING_PERIOD_SEC) * Math.min(delta, 0.05);
+    spherical.theta = WALL_SWING_AMPLITUDE * Math.sin(swingPhaseRef.current);
+    spherical.phi = THREE.MathUtils.clamp(spherical.phi, 1.1, 2.0);
+
+    offset.setFromSpherical(spherical);
+    camera.position.copy(controls.target).add(offset);
+    camera.lookAt(controls.target);
+    controls.update();
+  });
 
   return null;
 };
@@ -227,6 +267,8 @@ export const App: React.FC = () => {
   }, []);
 
   const shadowY = mount === 'desk' ? DESK_FLOOR_Y - 0.012 : -2.42;
+  const activeAutoRotate = autoRotate && !dragPaused;
+  const isWallMount = mount === 'wall';
 
   return (
     <div className="h-[100dvh] w-full bg-atelier-bg text-zinc-100 flex flex-col desktop:flex-row overflow-hidden">
@@ -361,14 +403,19 @@ export const App: React.FC = () => {
             dampingFactor={0.055}
             minDistance={5.5}
             maxDistance={17}
-            minPolarAngle={Math.PI * 0.2}
-            maxPolarAngle={Math.PI * 0.8}
-            autoRotate={autoRotate && !dragPaused}
+            minAzimuthAngle={isWallMount ? -0.9 : -Infinity}
+            maxAzimuthAngle={isWallMount ? 0.9 : Infinity}
+            minPolarAngle={isWallMount ? 1.1 : Math.PI * 0.2}
+            maxPolarAngle={isWallMount ? 2.0 : Math.PI * 0.8}
+            autoRotate={!isWallMount && activeAutoRotate}
             autoRotateSpeed={1.0}
             onStart={handleOrbitStart}
             onEnd={handleOrbitEnd}
           />
-          <ResponsiveCameraRig controlsRef={controlsRef} />
+          <ResponsiveCameraRig
+            controlsRef={controlsRef}
+            activeAutoRotate={activeAutoRotate}
+          />
         </Canvas>
 
         {/* Bottom-left subtle camera hint */}

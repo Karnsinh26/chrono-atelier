@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import { CASE_MATERIAL_SPECS, getWalnutWoodTexture } from '../lib/materials';
 import { CLOCK_OUTER_APOTHEM } from '../lib/shapes';
 import { useClockStore } from '../store/useClockStore';
@@ -34,10 +35,10 @@ function getWallShadowTexture(): THREE.CanvasTexture {
   const ctx = canvas.getContext('2d')!;
 
   const c = size / 2;
-  const grad = ctx.createRadialGradient(c, c, size * 0.14, c, c, size * 0.5);
+  const grad = ctx.createRadialGradient(c, c, size * 0.12, c, c, size * 0.46);
   grad.addColorStop(0.0, 'rgba(0, 0, 0, 0.62)');
-  grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.36)');
-  grad.addColorStop(0.82, 'rgba(0, 0, 0, 0.10)');
+  grad.addColorStop(0.5, 'rgba(0, 0, 0, 0.34)');
+  grad.addColorStop(0.78, 'rgba(0, 0, 0, 0.08)');
   grad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
 
   ctx.fillStyle = grad;
@@ -115,7 +116,6 @@ function buildDeskStandGeometries(): DeskStandBundle {
   });
 
   // 3. Sculpted rear support leg (profile in Z-Y plane, extruded along X, centered at x = 0)
-  // Connects seamlessly from foot plate at Y = DESK_TOUCH_Y + 0.02 up to the tilted rear collar plate
   const strutProfile = new THREE.Shape();
   const yBottom = DESK_TOUCH_Y + 0.015;
   const yTop = -0.62;
@@ -133,7 +133,6 @@ function buildDeskStandGeometries(): DeskStandBundle {
     bevelSize: 0.012,
     bevelSegments: 3,
   });
-  // Rotate -PI/2 around Y so profile (x=Z, y=Y, z=X) maps to world (-Z_extrude, Y, +X_profile = Z)
   strutGeometry.translate(0, 0, -strutWidth / 2);
   strutGeometry.rotateY(-Math.PI / 2);
 
@@ -162,6 +161,7 @@ export const Stand: React.FC<StandProps> = ({ children }) => {
   const spec = CASE_MATERIAL_SPECS[caseMat];
   const walnutTexture = useMemo(() => getWalnutWoodTexture(), []);
   const wallShadowTex = useMemo(() => getWallShadowTexture(), []);
+  const wallShadowMatRef = useRef<THREE.MeshBasicMaterial>(null);
 
   const standGeos = useMemo(() => buildDeskStandGeometries(), []);
 
@@ -174,6 +174,15 @@ export const Stand: React.FC<StandProps> = ({ children }) => {
     };
   }, [standGeos]);
 
+  // Fade wall shadow plane opacity based on camera viewing angle so it never looks like a floating card
+  useFrame(({ camera }) => {
+    if (mount !== 'wall' || !wallShadowMatRef.current) return;
+    const dist = Math.max(0.001, camera.position.length());
+    const cosAngle = camera.position.z / dist;
+    const angleFade = THREE.MathUtils.smoothstep(cosAngle, 0.62, 0.96);
+    wallShadowMatRef.current.opacity = 0.54 * angleFade;
+  });
+
   const isWalnutCase = caseMat === 'walnut';
   const supportMatMap = spec.useWoodTexture ? walnutTexture : null;
   const supportMatKey = spec.useWoodTexture ? 'support-wood' : 'support-solid';
@@ -181,13 +190,14 @@ export const Stand: React.FC<StandProps> = ({ children }) => {
   if (mount === 'wall') {
     return (
       <group>
-        {/* Subtle soft wall drop-shadow behind the floating clock */}
-        <mesh position={[-0.1, -0.15, -0.38]} renderOrder={0}>
-          <planeGeometry args={[5.15, 5.15]} />
+        {/* Soft circular wall shadow behind the floating clock; fades smoothly at oblique camera angles */}
+        <mesh position={[-0.08, -0.14, -0.36]} renderOrder={0}>
+          <circleGeometry args={[2.6, 64]} />
           <meshBasicMaterial
+            ref={wallShadowMatRef}
             map={wallShadowTex}
             transparent
-            opacity={0.55}
+            opacity={0.54}
             depthWrite={false}
           />
         </mesh>
@@ -228,7 +238,6 @@ export const Stand: React.FC<StandProps> = ({ children }) => {
       </group>
 
       {/* Base block: Walnut if case is walnut, otherwise dark architectural stone #2a2522 */}
-      {/* Top surface (including +0.024 bevel) sits at exact DESK_TOUCH_Y so bottom flat edge kisses it cleanly */}
       <mesh
         geometry={standGeos.baseGeometry}
         position={[0, baseBottomLocalOriginY, 0.02]}
