@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { CASE_MATERIAL_SPECS } from '../lib/materials';
+import { encodeConfigToHash } from '../lib/shareUrl';
 import {
   calculatePrice,
   FINISH_PRICES,
@@ -131,9 +132,38 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   );
 };
 
-export const Panel: React.FC = () => {
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to legacy execCommand copy
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+interface PanelProps {
+  onDownloadPng: () => void;
+  onShowToast: (message: string) => void;
+}
+
+export const Panel: React.FC<PanelProps> = ({ onDownloadPng, onShowToast }) => {
   const store = useClockStore();
-  const [copied, setCopied] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Collapsible sections — all open by default
   const [sectionsOpen, setSectionsOpen] = useState({
@@ -169,21 +199,48 @@ export const Panel: React.FC = () => {
     (s) => s.hex.toLowerCase() === store.handColor.toLowerCase()
   );
 
-  const handleCopyDesign = async () => {
-    try {
-      const json = JSON.stringify(store.getSerializableConfig(), null, 2);
-      await navigator.clipboard.writeText(json);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2200);
-    } catch {
-      // Ignore clipboard permission errors
+  const handleReset = () => {
+    store.resetConfig();
+    if (window.location.hash) {
+      window.history.replaceState(
+        null,
+        '',
+        `${window.location.pathname}${window.location.search}`
+      );
     }
+    setMobileMenuOpen(false);
+    onShowToast('Reset to Classic preset');
+  };
+
+  const handleShareLink = async () => {
+    const hash = encodeConfigToHash(store.getSerializableConfig());
+    const nextUrl = `${window.location.origin}${window.location.pathname}${window.location.search}${hash}`;
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${window.location.search}${hash}`
+    );
+    await copyTextToClipboard(nextUrl);
+    setMobileMenuOpen(false);
+    onShowToast('Share link copied to clipboard');
+  };
+
+  const handleDownload = () => {
+    setMobileMenuOpen(false);
+    onDownloadPng();
+  };
+
+  const handleCopyDesign = async () => {
+    const json = JSON.stringify(store.getSerializableConfig(), null, 2);
+    await copyTextToClipboard(json);
+    setMobileMenuOpen(false);
+    onShowToast('Copied design JSON to clipboard');
   };
 
   return (
     <aside className="w-full flex-1 min-h-0 desktop:flex-none desktop:w-[360px] desktop:h-full bg-atelier-panel border-t desktop:border-t-0 desktop:border-l border-atelier-border flex flex-col shrink-0 select-none">
       {/* Compact Panel Header */}
-      <div className="px-5 py-3.5 desktop:pt-5 desktop:pb-4 border-b border-atelier-border shrink-0">
+      <div className="px-4 py-2.5 desktop:px-5 desktop:pt-5 desktop:pb-4 border-b border-atelier-border shrink-0">
         <div className="flex items-center justify-between">
           <span className="text-[11px] uppercase tracking-[0.22em] text-atelier-gold font-medium">
             Atelier Configurator
@@ -198,7 +255,7 @@ export const Panel: React.FC = () => {
       </div>
 
       {/* Scrollable Controls Area */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto touch-pan-y px-4 desktop:px-5 py-3.5 desktop:py-4 space-y-4">
         {/* PRESETS (2x2 Grid) */}
         <section className="space-y-2.5">
           <div className="flex items-center justify-between">
@@ -786,36 +843,128 @@ export const Panel: React.FC = () => {
         </section>
       </div>
 
-      {/* Sticky Footer: Live Price + Reset + Copy Design */}
-      <div className="p-4 desktop:p-5 border-t border-atelier-border bg-[#121419] space-y-3 shrink-0">
+      {/* Sticky Footer: Live Price + Reset · Share link · Download PNG · Copy design (⋯ menu on mobile) */}
+      <div className="relative p-3.5 desktop:p-4 border-t border-atelier-border bg-[#121419] space-y-2.5 shrink-0">
         <div className="flex items-baseline justify-between">
           <div>
             <div className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">
               Estimated Price
             </div>
-            <div className="text-[11px] text-zinc-500">Incl. bespoke assembly</div>
+            <div className="text-[10px] desktop:text-[11px] text-zinc-500">
+              Incl. bespoke assembly
+            </div>
           </div>
-          <div className="font-brand text-2xl font-semibold text-atelier-gold tracking-tight tabular-nums">
+          <div className="font-brand text-xl desktop:text-2xl font-semibold text-atelier-gold tracking-tight tabular-nums">
             {formatINR(livePrice)}
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2.5">
+        {/* Desktop Footer Actions: Reset · Share link · Download PNG · Copy design */}
+        <div className="hidden desktop:grid desktop:grid-cols-2 gap-2">
           <button
             type="button"
-            onClick={store.resetConfig}
-            className="py-2.5 px-3 rounded-lg text-xs font-medium bg-atelier-surface border border-atelier-border text-zinc-300 hover:text-white hover:border-zinc-600 transition"
+            onClick={handleReset}
+            className="py-2 px-2.5 rounded-lg text-xs font-medium bg-atelier-surface border border-atelier-border text-zinc-300 hover:text-white hover:border-zinc-600 transition"
           >
             Reset
           </button>
           <button
             type="button"
-            onClick={handleCopyDesign}
-            className="py-2.5 px-3 rounded-lg text-xs font-semibold bg-atelier-gold text-zinc-950 hover:bg-atelier-goldHover transition"
+            onClick={handleShareLink}
+            className="py-2 px-2.5 rounded-lg text-xs font-semibold bg-atelier-gold text-zinc-950 hover:bg-atelier-goldHover transition"
           >
-            {copied ? 'Copied JSON ✓' : 'Copy Design'}
+            Share link
+          </button>
+          <button
+            type="button"
+            onClick={handleDownload}
+            className="py-2 px-2.5 rounded-lg text-xs font-medium bg-atelier-surface border border-atelier-border text-zinc-200 hover:text-white hover:border-atelier-gold/50 transition"
+          >
+            Download PNG
+          </button>
+          <button
+            type="button"
+            onClick={handleCopyDesign}
+            className="py-2 px-2.5 rounded-lg text-xs font-medium bg-atelier-surface border border-atelier-border text-zinc-200 hover:text-white hover:border-atelier-gold/50 transition"
+          >
+            Copy design
           </button>
         </div>
+
+        {/* Mobile Footer Actions: Primary Share link + Download PNG + ⋯ menu */}
+        <div className="flex desktop:hidden items-center gap-2">
+          <button
+            type="button"
+            onClick={handleShareLink}
+            className="flex-1 py-2 px-3 rounded-lg text-xs font-semibold bg-atelier-gold text-zinc-950 hover:bg-atelier-goldHover transition"
+          >
+            Share link
+          </button>
+          <button
+            type="button"
+            onClick={handleDownload}
+            className="py-2 px-3 rounded-lg text-xs font-medium bg-atelier-surface border border-atelier-border text-zinc-200 hover:text-white transition"
+          >
+            Download PNG
+          </button>
+          <button
+            type="button"
+            aria-label="More actions"
+            aria-expanded={mobileMenuOpen}
+            onClick={() => setMobileMenuOpen((prev) => !prev)}
+            className={`w-9 h-9 rounded-lg border flex items-center justify-center text-base font-bold tracking-widest transition ${
+              mobileMenuOpen
+                ? 'bg-atelier-gold/20 border-atelier-gold text-atelier-gold'
+                : 'bg-atelier-surface border-atelier-border text-zinc-200 hover:text-white'
+            }`}
+          >
+            ⋯
+          </button>
+        </div>
+
+        {/* Mobile ⋯ Popover Menu */}
+        {mobileMenuOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-30 desktop:hidden"
+              onClick={() => setMobileMenuOpen(false)}
+            />
+            <div className="absolute right-3.5 bottom-full mb-2 w-48 rounded-xl bg-atelier-panel border border-atelier-border shadow-2xl py-1.5 z-40 desktop:hidden">
+              <button
+                type="button"
+                onClick={handleReset}
+                className="w-full px-3.5 py-2 text-left text-xs text-zinc-200 hover:bg-atelier-surface flex items-center justify-between"
+              >
+                <span>Reset</span>
+                <span className="text-[10px] text-zinc-500">Default</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleShareLink}
+                className="w-full px-3.5 py-2 text-left text-xs text-atelier-gold hover:bg-atelier-surface flex items-center justify-between font-medium"
+              >
+                <span>Share link</span>
+                <span className="text-[10px] text-atelier-gold/70">#d=…</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDownload}
+                className="w-full px-3.5 py-2 text-left text-xs text-zinc-200 hover:bg-atelier-surface flex items-center justify-between"
+              >
+                <span>Download PNG</span>
+                <span className="text-[10px] text-zinc-500">2× HD</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyDesign}
+                className="w-full px-3.5 py-2 text-left text-xs text-zinc-200 hover:bg-atelier-surface flex items-center justify-between"
+              >
+                <span>Copy design</span>
+                <span className="text-[10px] text-zinc-500">JSON</span>
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </aside>
   );

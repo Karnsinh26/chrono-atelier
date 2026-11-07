@@ -99,6 +99,7 @@ export interface ClockStore extends ClockConfig {
   transitionTick: number;
   setConfig: (partial: Partial<ClockConfig>) => void;
   applyPreset: (preset: PresetName) => void;
+  applyHydratedConfig: (config: ClockConfig, preset?: PresetName | null) => void;
   resetConfig: () => void;
   setAutoRotate: (autoRotate: boolean) => void;
   getSerializableConfig: () => ClockConfig;
@@ -122,6 +123,14 @@ export const useClockStore = create<ClockStore>((set, get) => ({
   applyPreset: (preset) =>
     set((state) => ({
       ...PRESETS[preset],
+      activePreset: preset,
+      transitionTick: state.transitionTick + 1,
+    })),
+
+  applyHydratedConfig: (config, preset = null) =>
+    set((state) => ({
+      ...state,
+      ...config,
       activePreset: preset,
       transitionTick: state.transitionTick + 1,
     })),

@@ -3,13 +3,15 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { CASE_MATERIAL_SPECS, getWalnutWoodTexture } from '../lib/materials';
 import { CLOCK_OUTER_APOTHEM } from '../lib/shapes';
-import { useClockStore } from '../store/useClockStore';
+import { CaseShape, useClockStore } from '../store/useClockStore';
 
 interface StandProps {
   children: React.ReactNode;
+  lowPoly?: boolean;
 }
 
-const DESK_TILT_RAD = THREE.MathUtils.degToRad(6); // ~6° backward tilt
+const DESK_TILT_RAD = THREE.MathUtils.degToRad(6); // ~6° backward clock tilt
+const A_FRAME_ANGLE_RAD = THREE.MathUtils.degToRad(25); // ~25° backward A-frame brace angle
 const DESK_CLOCK_OFFSET_Y = 0.22;
 
 // Exact lowest Y of the bevelled clock case (outerApothem 2.00 + bevelSize 0.025 = 2.025, rear z = -0.05)
@@ -50,7 +52,12 @@ function getWallShadowTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function createRoundedRectShape(width: number, depth: number, radius: number): THREE.Shape {
+function createRoundedRectShape(
+  width: number,
+  depth: number,
+  radius: number,
+  segs = 12
+): THREE.Shape {
   const hw = width / 2;
   const hd = depth / 2;
   const r = Math.min(radius, hw * 0.45, hd * 0.45);
@@ -65,7 +72,6 @@ function createRoundedRectShape(width: number, depth: number, radius: number): T
     { x: cx, y: -cy, a0: Math.PI * 1.5 },
   ];
 
-  const segs = 12;
   let first = true;
   for (const c of corners) {
     for (let i = 0; i < segs; i++) {
@@ -84,97 +90,153 @@ function createRoundedRectShape(width: number, depth: number, radius: number): T
   return s;
 }
 
+/**
+ * Builds the 2D A-frame silhouette (splayed outer legs + crossbar + two open trapezoidal cutouts)
+ * which is extruded and angled backward ~25° from the clock's rear collar down to the wide base foot.
+ */
+function createAFrameShape(): THREE.Shape {
+  const s = new THREE.Shape();
+  const bottomHalfW = 0.82; // 1.64 total width at the base foot
+  const topHalfW = 0.36; // 0.72 width at the upper rear collar
+  const height = 1.32;
+
+  // CCW outer A-frame perimeter
+  s.moveTo(-bottomHalfW, 0);
+  s.lineTo(bottomHalfW, 0);
+  s.lineTo(topHalfW, height);
+  s.lineTo(-topHalfW, height);
+  s.closePath();
+
+  // Lower trapezoidal window (below the A-frame horizontal crossbar, CW hole)
+  const holeBottom = new THREE.Path();
+  holeBottom.moveTo(-0.56, 0.05);
+  holeBottom.lineTo(-0.4, 0.52);
+  holeBottom.lineTo(0.4, 0.52);
+  holeBottom.lineTo(0.56, 0.05);
+  holeBottom.closePath();
+  s.holes.push(holeBottom);
+
+  // Upper trapezoidal window (above the A-frame horizontal crossbar, CW hole)
+  const holeTop = new THREE.Path();
+  holeTop.moveTo(-0.34, 0.68);
+  holeTop.lineTo(-0.2, 1.12);
+  holeTop.lineTo(0.2, 1.12);
+  holeTop.lineTo(0.34, 0.68);
+  holeTop.closePath();
+  s.holes.push(holeTop);
+
+  return s;
+}
+
 interface DeskStandBundle {
   baseGeometry: THREE.ExtrudeGeometry;
   footPlateGeometry: THREE.ExtrudeGeometry;
-  strutGeometry: THREE.ExtrudeGeometry;
+  aFrameGeometry: THREE.ExtrudeGeometry;
   backCollarGeometry: THREE.ExtrudeGeometry;
 }
 
-function buildDeskStandGeometries(): DeskStandBundle {
-  // 1. Base block plinth (extruded along local Z then rotated -PI/2 around X so top sits flush at DESK_TOUCH_Y)
+/**
+ * Computes outer clock width for the active shape and makes the desk base ~10% wider
+ * so the clock never looks top-heavy (4.46 units for round/square, 5.14 units for hexagon).
+ */
+function getClockOuterWidth(shape: CaseShape): number {
+  if (shape === 'hexagon') {
+    const hexCircumradius = CLOCK_OUTER_APOTHEM / Math.cos(Math.PI / 6);
+    return 2 * (hexCircumradius + 0.025);
+  }
+  return 2 * (CLOCK_OUTER_APOTHEM + 0.025);
+}
+
+function buildDeskStandGeometries(shape: CaseShape, lowPoly = false): DeskStandBundle {
+  const bevelSegs = lowPoly ? 2 : 4;
+  const cornerSegs = lowPoly ? 8 : 12;
+
+  // 1. Base block plinth (~10% wider than the clock's outer width, deep enough for the 25° A-frame foot)
   const bevel = 0.024;
   const baseBodyDepth = BASE_HEIGHT - bevel * 2;
-  const baseShape = createRoundedRectShape(2.88 - bevel * 2, 1.42 - bevel * 2, 0.18);
+  const baseWidth = getClockOuterWidth(shape) * 1.1; // +10% wider than clock outer width
+  const baseDepth = 1.88;
+  const baseShape = createRoundedRectShape(
+    baseWidth - bevel * 2,
+    baseDepth - bevel * 2,
+    0.2,
+    cornerSegs
+  );
   const baseGeometry = new THREE.ExtrudeGeometry(baseShape, {
     depth: baseBodyDepth,
     bevelEnabled: true,
     bevelThickness: bevel,
     bevelSize: bevel,
-    bevelSegments: 4,
+    bevelSegments: bevelSegs,
   });
 
-  // 2. Foot plate resting on rear of base block
+  // 2. Wide rear foot plate resting on the rear of the base block to anchor the A-frame legs
   const footBevel = 0.008;
-  const footShape = createRoundedRectShape(0.84, 0.44, 0.09);
+  const footShape = createRoundedRectShape(1.92, 0.42, 0.1, cornerSegs);
   const footPlateGeometry = new THREE.ExtrudeGeometry(footShape, {
-    depth: 0.032,
+    depth: 0.036,
     bevelEnabled: true,
     bevelThickness: footBevel,
     bevelSize: footBevel,
-    bevelSegments: 3,
+    bevelSegments: Math.max(2, bevelSegs - 1),
   });
 
-  // 3. Sculpted rear support leg (profile in Z-Y plane, extruded along X, centered at x = 0)
-  const strutProfile = new THREE.Shape();
-  const yBottom = DESK_TOUCH_Y + 0.015;
-  const yTop = -0.62;
-  strutProfile.moveTo(-0.56, yBottom);
-  strutProfile.lineTo(-0.3, yBottom);
-  strutProfile.lineTo(-0.19, yTop);
-  strutProfile.lineTo(-0.35, yTop + 0.06);
-  strutProfile.closePath();
-
-  const strutWidth = 0.44;
-  const strutGeometry = new THREE.ExtrudeGeometry(strutProfile, {
-    depth: strutWidth,
+  // 3. Proper A-frame brace (two splayed legs + horizontal crossbar, angled backward ~25°)
+  const aFrameShape = createAFrameShape();
+  const aFrameDepth = 0.12;
+  const aFrameGeometry = new THREE.ExtrudeGeometry(aFrameShape, {
+    depth: aFrameDepth,
     bevelEnabled: true,
     bevelThickness: 0.014,
-    bevelSize: 0.012,
-    bevelSegments: 3,
+    bevelSize: 0.014,
+    bevelSegments: Math.max(2, bevelSegs - 1),
   });
-  strutGeometry.translate(0, 0, -strutWidth / 2);
-  strutGeometry.rotateY(-Math.PI / 2);
+  // Center extrusion depth around local Z = 0
+  aFrameGeometry.translate(0, 0, -aFrameDepth / 2);
 
-  // 4. Rear mounting collar plate flush against the clock's back body (z_local = -0.290)
-  const collarShape = createRoundedRectShape(0.82, 0.72, 0.14);
+  // 4. Rear mounting collar bridge flush against the lower clock caseback (z_local = -0.290)
+  const collarShape = createRoundedRectShape(0.88, 0.34, 0.09, cornerSegs);
   const backCollarGeometry = new THREE.ExtrudeGeometry(collarShape, {
-    depth: 0.035,
+    depth: 0.04,
     bevelEnabled: true,
     bevelThickness: 0.008,
     bevelSize: 0.008,
-    bevelSegments: 3,
+    bevelSegments: Math.max(2, bevelSegs - 1),
   });
 
   return {
     baseGeometry,
     footPlateGeometry,
-    strutGeometry,
+    aFrameGeometry,
     backCollarGeometry,
   };
 }
 
-export const Stand: React.FC<StandProps> = ({ children }) => {
+export const Stand: React.FC<StandProps> = ({ children, lowPoly = false }) => {
   const mount = useClockStore((s) => s.mount);
   const caseMat = useClockStore((s) => s.caseMat);
+  const shape = useClockStore((s) => s.shape);
 
   const spec = CASE_MATERIAL_SPECS[caseMat];
   const walnutTexture = useMemo(() => getWalnutWoodTexture(), []);
   const wallShadowTex = useMemo(() => getWallShadowTexture(), []);
   const wallShadowMatRef = useRef<THREE.MeshBasicMaterial>(null);
 
-  const standGeos = useMemo(() => buildDeskStandGeometries(), []);
+  const standGeos = useMemo(
+    () => buildDeskStandGeometries(shape, lowPoly),
+    [shape, lowPoly]
+  );
 
   useEffect(() => {
     return () => {
       standGeos.baseGeometry.dispose();
       standGeos.footPlateGeometry.dispose();
-      standGeos.strutGeometry.dispose();
+      standGeos.aFrameGeometry.dispose();
       standGeos.backCollarGeometry.dispose();
     };
   }, [standGeos]);
 
-  // Fade wall shadow plane opacity based on camera viewing angle so it never looks like a floating card
+  // Fade wall shadow plane opacity based on camera viewing angle so it never looks like a floating square
   useFrame(({ camera }) => {
     if (mount !== 'wall' || !wallShadowMatRef.current) return;
     const dist = Math.max(0.001, camera.position.length());
@@ -206,22 +268,22 @@ export const Stand: React.FC<StandProps> = ({ children }) => {
     );
   }
 
-  // Desk mount: base block + case-material rear support leg + clock tilted back ~6°
+  // Desk mount: ~10% wider base block + ~25° backward-angled A-frame brace + clock tilted back ~6°
   const baseBottomLocalOriginY = DESK_FLOOR_Y + 0.024;
 
   return (
     <group>
-      {/* Tilted clock + rear collar plate attached flush to caseback */}
+      {/* Tilted clock + rear collar bridge attached flush to lower caseback */}
       <group
         position={[0, DESK_CLOCK_OFFSET_Y, 0]}
         rotation={[-DESK_TILT_RAD, 0, 0]}
       >
         {children}
 
-        {/* Rear collar plate flush against back body (z_local <= -0.290) */}
+        {/* Rear collar bridge flush against lower back body (clear of upper caseback engraving & 4 screws) */}
         <mesh
           geometry={standGeos.backCollarGeometry}
-          position={[0, -0.82, -0.333]}
+          position={[0, -0.82, -0.336]}
           castShadow
         >
           <meshPhysicalMaterial
@@ -237,10 +299,10 @@ export const Stand: React.FC<StandProps> = ({ children }) => {
         </mesh>
       </group>
 
-      {/* Base block: Walnut if case is walnut, otherwise dark architectural stone #2a2522 */}
+      {/* Base block (~10% wider than clock outer width): Walnut if case is walnut, otherwise dark stone #2a2522 */}
       <mesh
         geometry={standGeos.baseGeometry}
-        position={[0, baseBottomLocalOriginY, 0.02]}
+        position={[0, baseBottomLocalOriginY, -0.22]}
         rotation={[-Math.PI / 2, 0, 0]}
         castShadow
         receiveShadow
@@ -257,10 +319,10 @@ export const Stand: React.FC<StandProps> = ({ children }) => {
         />
       </mesh>
 
-      {/* Rear support foot plate on top of base block (uses case material) */}
+      {/* Wide rear foot plate on top of base block anchoring the A-frame legs (uses case material) */}
       <mesh
         geometry={standGeos.footPlateGeometry}
-        position={[0, DESK_TOUCH_Y + 0.008, -0.42]}
+        position={[0, DESK_TOUCH_Y + 0.008, -0.78]}
         rotation={[-Math.PI / 2, 0, 0]}
         castShadow
         receiveShadow
@@ -277,10 +339,16 @@ export const Stand: React.FC<StandProps> = ({ children }) => {
         />
       </mesh>
 
-      {/* Angled rear support leg bracing the tilted clock (uses case material) */}
-      <mesh geometry={standGeos.strutGeometry} castShadow receiveShadow>
+      {/* Proper A-frame brace angling backward ~25° from the clock back down to the wide rear foot */}
+      <mesh
+        geometry={standGeos.aFrameGeometry}
+        position={[0, DESK_TOUCH_Y + 0.012, -0.78]}
+        rotation={[A_FRAME_ANGLE_RAD, 0, 0]}
+        castShadow
+        receiveShadow
+      >
         <meshPhysicalMaterial
-          key={`strut-${supportMatKey}`}
+          key={`aframe-${supportMatKey}`}
           color={spec.color}
           map={supportMatMap}
           metalness={spec.metalness}

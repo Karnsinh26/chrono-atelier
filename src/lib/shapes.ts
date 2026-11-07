@@ -47,12 +47,13 @@ function buildShapeAndHoleFromCCWPoints(points: THREE.Vector2[], maxExtent: numb
 export function makeShape(
   type: CaseShape,
   apothem: number,
-  cornerRadius?: number
+  cornerRadius?: number,
+  lowPoly = false
 ): ShapeResult {
   const points: THREE.Vector2[] = [];
 
   if (type === 'round') {
-    const segments = 128;
+    const segments = lowPoly ? 72 : 128;
     for (let i = 0; i < segments; i++) {
       const theta = (i / segments) * Math.PI * 2;
       points.push(new THREE.Vector2(Math.cos(theta) * apothem, Math.sin(theta) * apothem));
@@ -70,7 +71,7 @@ export function makeShape(
       { cx: -c, cy: -c, start: Math.PI },
       { cx: c, cy: -c, start: Math.PI * 1.5 },
     ];
-    const arcSegments = 24;
+    const arcSegments = lowPoly ? 12 : 24;
     for (const corner of corners) {
       for (let j = 0; j < arcSegments; j++) {
         const t = j / (arcSegments - 1);
@@ -92,7 +93,7 @@ export function makeShape(
   const rawCorner = cornerRadius ?? apothem * 0.12;
   const r = THREE.MathUtils.clamp(rawCorner, 0.04, apothem * 0.26);
   const filletCenterRadius = (apothem - r) / cos30;
-  const arcSegments = 16;
+  const arcSegments = lowPoly ? 10 : 16;
 
   for (let k = 0; k < 6; k++) {
     const vertexAngle = (k * Math.PI) / 3;
@@ -170,7 +171,11 @@ function computeCornerRadii(
  * - glassGeometry: world Z +0.205
  * - bezelGeometry: world Z [-0.080, +0.255]
  */
-export function buildCaseGeometries(shape: CaseShape, bezelThickness: number): CaseGeometryBundle {
+export function buildCaseGeometries(
+  shape: CaseShape,
+  bezelThickness: number,
+  lowPoly = false
+): CaseGeometryBundle {
   const clampedBezel = THREE.MathUtils.clamp(bezelThickness, 0.1, 0.45);
   const outerApothem = CLOCK_OUTER_APOTHEM;
   const innerApothem = outerApothem - clampedBezel;
@@ -181,19 +186,21 @@ export function buildCaseGeometries(shape: CaseShape, bezelThickness: number): C
     clampedBezel
   );
 
+  const bevelSegments = lowPoly ? 2 : 5;
+
   // 1. Stepped back body (overlaps bezel along Z with radial step -> zero gap & zero side Z-fighting)
-  const backProfile = makeShape(shape, outerApothem - 0.035, backCorner);
+  const backProfile = makeShape(shape, outerApothem - 0.035, backCorner, lowPoly);
   const backGeometry = new THREE.ExtrudeGeometry(backProfile.shape, {
     depth: 0.2,
     bevelEnabled: true,
     bevelThickness: 0.03,
     bevelSize: 0.03,
-    bevelSegments: 5,
+    bevelSegments,
   });
 
   // 2. Bezel ring: outer shape with matching inner shape as hole
-  const outerProfile = makeShape(shape, outerApothem, outerCorner);
-  const innerProfile = makeShape(shape, innerApothem, innerCorner);
+  const outerProfile = makeShape(shape, outerApothem, outerCorner, lowPoly);
+  const innerProfile = makeShape(shape, innerApothem, innerCorner, lowPoly);
   outerProfile.shape.holes.push(innerProfile.holePath);
 
   const bezelGeometry = new THREE.ExtrudeGeometry(outerProfile.shape, {
@@ -201,18 +208,18 @@ export function buildCaseGeometries(shape: CaseShape, bezelThickness: number): C
     bevelEnabled: true,
     bevelThickness: 0.03,
     bevelSize: 0.025,
-    bevelSegments: 5,
+    bevelSegments,
   });
 
   // 3. Flat dial tucked slightly behind the inner bezel lip so there is never an edge gap
-  const dialProfile = makeShape(shape, innerApothem + 0.035, innerCorner + 0.02);
+  const dialProfile = makeShape(shape, innerApothem + 0.035, innerCorner + 0.02, lowPoly);
   const dialGeometry = new THREE.ShapeGeometry(dialProfile.shape);
   // Isotropic UV half-span ensures centered, unstretched texture AND keeps chapter ring inside innerApothem
   const uvHalfSpan = innerApothem * 1.18;
   applyCenteredIsotropicUVs(dialGeometry, uvHalfSpan);
 
   // 4. Thin protective glass crystal matching the inner bezel opening
-  const glassProfile = makeShape(shape, innerApothem + 0.008, innerCorner + 0.005);
+  const glassProfile = makeShape(shape, innerApothem + 0.008, innerCorner + 0.005, lowPoly);
   const glassGeometry = new THREE.ShapeGeometry(glassProfile.shape);
   applyCenteredIsotropicUVs(glassGeometry, uvHalfSpan);
 

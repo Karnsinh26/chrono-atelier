@@ -10,7 +10,11 @@ import { Stand } from './Stand';
 
 const SHAPE_TRANSITION_DURATION = 0.25; // ~250ms scale-down & scale-up
 
-export const Clock: React.FC = () => {
+interface ClockProps {
+  lowPoly?: boolean;
+}
+
+export const Clock: React.FC<ClockProps> = ({ lowPoly = false }) => {
   const shape = useClockStore((s) => s.shape);
   const bezel = useClockStore((s) => s.bezel);
   const transitionTick = useClockStore((s) => s.transitionTick);
@@ -69,10 +73,10 @@ export const Clock: React.FC = () => {
     }
   });
 
-  // Only rebuilds geometries when shape or bezel changes — never when material changes
+  // Only rebuilds geometries when shape, bezel, or mobile lowPoly tier changes — never when material changes
   const geometries = useMemo(
-    () => buildCaseGeometries(displayedShape, bezel),
-    [displayedShape, bezel]
+    () => buildCaseGeometries(displayedShape, bezel, lowPoly),
+    [displayedShape, bezel, lowPoly]
   );
 
   useEffect(() => {
@@ -83,7 +87,7 @@ export const Clock: React.FC = () => {
 
   return (
     <group ref={scaleGroupRef}>
-      <Stand>
+      <Stand lowPoly={lowPoly}>
         <Case geometries={geometries} />
         <Dial geometry={geometries.dialGeometry} />
         <Hands innerApothem={geometries.innerApothem} />
